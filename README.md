@@ -10,7 +10,7 @@ Componentes:
 
 Programa:
  - Wemos: proj_wemos_sr04.ino
- - Raspiberry: --depois-- Um programa para receber os dados do wemos e outro para disponibiizar por web.
+ - Raspberry: --depois-- Um programa para receber os dados do wemos e outro para disponibiizar por web.
  
 Esquematico:
   -- depois --
