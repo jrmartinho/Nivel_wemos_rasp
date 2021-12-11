@@ -14,3 +14,7 @@ Programa:
  
 Esquematico:
   -- depois --
+
+=================
+++++ CUIDADO ++++  Considere a adptacao de nivel 3,3V entre o WEMOS e o SR04T.
+=================
