@@ -11,10 +11,11 @@ Componentes:
 Programa:
  - Wemos: proj_wemos_sr04.ino
  - Raspberry: --depois-- Um programa para receber os dados do wemos e outro para disponibiizar por web.
- 
-Esquematico:
-  -- depois --
 
-=================
-++++ CUIDADO ++++  Considere a adptacao de nivel 3,3V entre o WEMOS e o SR04T.
-=================
+Esquematico:  -- depois -----  
+
+<br><br>
+
+---
+### ++++ **CUIDADO** ++++  Considere a adaptacao de nivel 3,3V entre o WEMOS e o SR04T.
+---
