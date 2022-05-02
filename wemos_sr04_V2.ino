@@ -3,30 +3,25 @@
  *=========================================================================================
  ** Monta e envia string com o valor medido de: 
  **----------------------------------------------------------------------------------------
- ** AnalogIn A0 (posicao do potenciometro) +10000
+ ** Posicao potenciometro +10000 - AnalogIn A0 - ledpwm=D8 acionado com  mesma intensidade
  **----------------------------------------------------------------------------------------
- ** pintrigger=D7(GPIO13) - pinecho=D6(GPIO12) - distancia em cm +20000
+ ** Distancia US em cm +20000 - pintrigger=D7(GPIO13) - pinecho=D6(GPIO12) 
  **----------------------------------------------------------------------------------------
- ** cont_medida - Numero da medida +30000   
+ ** Numero da medida +30000 - variavel cont_medida   
  *=========================================================================================
  ** String transmitida 10XXX20XXX30XXX - Potenciometro;UltraSom;Medida
  *=========================================================================================
- ** Recepcao da sting pelo RX 433MH com a biblioteca --RadioHead-- 
- ** Pino RX=GPIO5(D1) - Pino TX=GPIO4(D2) - Pino PTT=0 - Vel=1200
- *=========================================================================================
- ** Transmissao por UDP port 43210 (43211)
+  ** Transmissao por UDP port 43210 (43211)
  *
  ** Versao 1.0 - 04/08/2019
  *=========================================================================================
  ** Transmissao para a nuvem e servidor web para consulta
  *
- ** Versao 2.0 - 15/04/2022 (em desenvolvimento...)
+ ** Versao 2.0 - 01/05/2022 (em desenvolvimento...)
  *=========================================================================================
  */
 
 
-#include <RH_ASK.h>      //------para o TX 433---------------------------------------------
-#include <SPI.h>         // Not actually used but needed to compile
 #include <ESP8266WiFi.h> //------para WIFI e UDP-------------------------------------------
 #include <WiFiUdp.h>
 
@@ -35,127 +30,111 @@
 #include <ESP8266mDNS.h>
 ESP8266WebServer server(80);
 
-//RH_ASK driver (Velocidade Serial, RX, TX, PTT)
-RH_ASK driver(1200, D1, D2, 0); // ESP8266 or ESP32: do not use pin 11
-
-const uint8_t BUFFER_SIZE = 20;   // Buffer para conversao da msg recebida
-         char buffer[BUFFER_SIZE];
-      uint8_t msg[RH_ASK_MAX_MESSAGE_LEN];
-      uint8_t msglen = sizeof(msg);
-          int i;
-
-
-    const int ledPin = D4;   // LED DO ESP8266 - GPIO2 - D4        // Para piscaled
-    const int ledpwm = D8;   // GPIO15(D8) the pin that the LED PWM is attached to
+    const int ledPin = D4;    // LED BultIN do ESP8266 - GPIO2(D4) // Para piscaled
+    const int ledweb = D4;    // pisca no atendimento webserver
+    const int ledpwm = D8;    // LED PWM - GPIO15(D8)    // Para Potenc.AnalogIN A0
    
-    const int echoPin = D6;  // Echo Pin (GPIO12)            // Para Medida de distancia
-    const int trigPin = D7;  // Trigger Pin (GPIO13)
-unsigned long tempo_echo;    // Tempo de retorno do echo
+    const int echoPin = D6;   // Echo Pin - GPIO12(D6)   // Para Medida US distancia
+    const int trigPin = D7;   // Trigger Pin - GPIO13(D7)
+unsigned long tempo_echo;     // Tempo de retorno do echo
 
-unsigned long dist_echo = 0;             //Distancia Ultrassom
-unsigned long dist_pot = 0;              //Distancia potenciometro
-unsigned long cont_medida = 0;           //Para contagem de medidas
+unsigned long dist_echo = 0;  //Distancia Ultrassom
+unsigned long dist_pot = 0;   //Distancia potenciometro
+unsigned long cont_medida = 0;//Para contagem de medidas
           int contador;
 
-         bool le_RX433 = true;
-         bool le_US = false;
+         bool le_US = true;
          bool depura = false;
          bool ajuda = false;
-         bool RX433_ok = false;
-         bool RX433_timeout = false;
-         bool continuo = false;
+         bool continuo = true;
+         bool simula = false;
 
-  const char* ssid     = "Inserir SSID";  // Replace with your network credentials
-  const char* password = "Inserir Password";
+  const char* ssid     = "";  // Replace with your network credentials
+  const char* password = "";
 
 WiFiUDP Udp;
 //  unsigned int localUdpPort = 43210;        // local port to listen on (caixa superior)
  unsigned int localUdpPort = 43211;        // local port to listen on (caixa inferior)
          char incomingPacket[255];         // buffer for incoming packets
          char incomingPacket_comp[255];    // buffer for incoming packets
-         char replyPacket[] = "";          // a reply string to send back
+         char replyPacket[18];          // a reply string to send back
 
-         char medida[40] = "";  // mensagem de retorno com o valor medido
+         char medida[40];       // mensagem de retorno com o valor medido
                                 // se nao definir tamanho da erro no itoa
 
-unsigned long previousMillis = 0;      // Variável de controle do tempo // para medir o tempo
-unsigned long currentMillis = 0;      // Variável de tempo atual
-unsigned long piscaledInterval = 15000;// Tempo em ms do intervalo a ser executado
-unsigned long loopInterval = 100;     // Tempo em ms do intervalo a ser executado
-unsigned long RX433_TOut_Millis = 8000; // Tempo maximo para leitura RX433
+unsigned long currentMillis = 0;   // Variável de tempo atual
+unsigned long previousMillis = 0;  // Variável de controle do tempo, para medir o tempo
+unsigned long previousLoopMillis = 0;  // Variável de controle do tempo, para Loop
+unsigned long previousMedidaMillis = 0;  // Variável de controle do tempo, para Loop
+unsigned long piscaledInterval = 15000; // Tempo em ms maximo intervalo a ser executado
+unsigned long loopInterval = 3270;       // Tempo em ms a acrescentar ao tempo de Loop
 
-/*=== Rotinas para webserver ===================*/
-const int led = 13;
+// Variaveis para filtro e armazenamento local
+unsigned int  med_10s_cont = 0; //contador da medida de 10 segundos >> zera a cada XX medidas
+unsigned int  med_1m_cont = 0;  //contador da medida de 1 minuto    >> zera (rotaciona) em 60 posições
+unsigned int  med_5m_cont = 0;  //contador da medida de 5 minuto    >> zera (rotaciona) em 288 posições
+unsigned int  med_15m_cont = 0; //contador da medida de 15 minutos  >> zera (rotaciona) em 672 posições
 
-void handleRoot() {
-  digitalWrite(led, 1);
-  char temp[400];
-  int sec = millis() / 1000;
-  int min = sec / 60;
-  int hr = min / 60;
+unsigned long med_1m_timer = 0;   // Referencia de tempo para cronometro
+unsigned long med_5m_timer = 0;
+unsigned long med_15m_timer = 0;
 
-  snprintf(temp, 400,
+unsigned long v_10s_timestamp[10]={}; // Vetores de guarda de medidas de timestamp e Medida Ultra Som  
+unsigned long v_10s_medidaus[10]={};  // Em 10segundos, 1 , 5, e 15 minutos
 
-           "<html>\
-  <head>\
-    <meta http-equiv='refresh' content='5'/>\
-    <title>ESP8266 Demo</title>\
-    <style>\
-      body { background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088; }\
-    </style>\
-  </head>\
-  <body>\
-    <h1>Hello from ESP8266!</h1>\
-    <p>Uptime: %02d:%02d:%02d</p>\
-    <img src=\"/test.svg\" />\
-  </body>\
-</html>",
+unsigned long v_1m_timestamp[60]={};
+unsigned long v_1m_medidaus[60]={};
 
-           hr, min % 60, sec % 60
-          );
-  server.send(200, "text/html", temp);
-  digitalWrite(led, 0);
+unsigned long v_5m_timestamp[288]={};
+unsigned long v_5m_medidaus[288]={};
+
+unsigned long v_15m_timestamp[672]={};
+unsigned long v_15m_medidaus[672]={};
+
+// Fim variaveis para filtro e armazenamento local
+
+// Variavel para pagina html
+         char pagina_html[2000];
+// Fim variavel para pagina html
+
+
+/*=========================================================================================
+  --- Calcula Mediana do v_10s_medidaus, qq tamanho ---
+ *=========================================================================================*/
+float mediana() {
+    const int tamanho = sizeof(v_10s_medidaus)/sizeof(v_10s_medidaus[0]);
+          int aux,i,j;
+        float calc_mediana;
+unsigned long v_mediana[10];
+
+    for(i=0;i<tamanho;i++){v_mediana[i] = v_10s_medidaus[i];}
+
+    for(i=0;i<tamanho-1;i++){
+        for(j=i+1;j<tamanho;j++){
+            if(v_mediana[i] > v_mediana[j]){
+                aux = v_mediana[i];
+                v_mediana[i] = v_mediana[j];
+                v_mediana[j] = aux;
+    }   }   }
+    if (tamanho%2) {
+        calc_mediana = v_mediana[tamanho/2];
+    } else {
+        calc_mediana = (v_mediana[tamanho/2-1]+v_mediana[tamanho/2])/2;
+    }
+
+    if (depura){
+        Serial.print("Mediana - Tamanho Vetor = ");Serial.println(tamanho);
+        Serial.print("Mediana - Vetor = {");
+        for(i=0;i<tamanho-1;i++){
+            Serial.print(v_mediana[i]); Serial.print(", ");
+        }
+        Serial.print(v_mediana[i]); Serial.println("}");
+        Serial.print("Mediana = "); Serial.println(calc_mediana);
+    }
+    
+    return calc_mediana;
 }
-
-void handleNotFound() {
-  digitalWrite(led, 1);
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += server.uri();
-  message += "\nMethod: ";
-  message += (server.method() == HTTP_GET) ? "GET" : "POST";
-  message += "\nArguments: ";
-  message += server.args();
-  message += "\n";
-
-  for (uint8_t i = 0; i < server.args(); i++) {
-    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
-  }
-
-  server.send(404, "text/plain", message);
-  digitalWrite(led, 0);
-}
-
-void drawGraph() {
-  String out;
-  out.reserve(2600);
-  char temp[70];
-  out += "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"400\" height=\"150\">\n";
-  out += "<rect width=\"400\" height=\"150\" fill=\"rgb(250, 230, 210)\" stroke-width=\"1\" stroke=\"rgb(0, 0, 0)\" />\n";
-  out += "<g stroke=\"black\">\n";
-  int y = rand() % 130;
-  for (int x = 10; x < 390; x += 10) {
-    int y2 = rand() % 130;
-    sprintf(temp, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" stroke-width=\"1\" />\n", x, 140 - y, x + 10, 140 - y2);
-    out += temp;
-    y = y2;
-  }
-  out += "</g>\n</svg>\n";
-
-  server.send(200, "image/svg+xml", out);
-}
-
-/*====== Fim rotinas webserver ===================================*/
+// Fim mediana()
 
 /*=========================================================================================
   --- put_UDP ---
@@ -165,7 +144,6 @@ void put_UDP() {
     Udp.beginPacket(Udp.remoteIP(), Udp.remotePort());
     Udp.write(replyPacket);
     Udp.endPacket();
-    previousMillis = currentMillis;    // Salva o tempo atual
     Serial.printf("UDP sent packet contents: %s\n", replyPacket);
 }
 
@@ -173,8 +151,9 @@ void put_UDP() {
   Contador de medidas
  *=========================================================================================*/
 void incrementa_cont_medida(){
-    if (cont_medida == 2001) {cont_medida = 0;}
+    if (cont_medida > 2000) {cont_medida = 0;}
     cont_medida = cont_medida + 1;
+    if (depura) {Serial.print("cont_medida = "); Serial.println(cont_medida);}    
 }
   
 /*=========================================================================================
@@ -188,14 +167,16 @@ void piscaled(){
     digitalWrite(ledPin, LOW); //ACENDE
     delay(10); //INTERVALO DE 0,01 SEGUNDO
     digitalWrite(ledPin, HIGH); //APAGA
-    delay(1000); //INTERVALO DE 1 SEGUNDO
+    delay(1000); //INTERVALO DE 1 SEGUNDO    // 1,2 segundos
 }
 
 /*=========================================================================================
-  Mede distancia do ultrassom
+  Mede distancia do ultrassom e valor posição potenciometro
  *=========================================================================================*/
 void mededistancia(){
     incrementa_cont_medida();
+    previousMedidaMillis = millis();
+    if (depura) {Serial.print("cont_medida_mededistancia() = "); Serial.println(cont_medida);}
     digitalWrite(trigPin, LOW);
     delayMicroseconds(2);
     digitalWrite(trigPin, HIGH);
@@ -204,7 +185,13 @@ void mededistancia(){
     tempo_echo = pulseIn(echoPin, HIGH);
     if (depura) {Serial.print("tempo_echo = "); Serial.println(tempo_echo);}
     dist_echo = tempo_echo/58.138;           //Calculate the distance (in cm) based on the speed of sound.
+    if (simula){
+        dist_echo = (millis()/10000)%200;
+        if (dist_echo<20){dist_echo=21;}
+        if (dist_echo>200){dist_echo=199;}
+    }
     if (depura) {Serial.print("dist_echo apos calculo= "); Serial.println(dist_echo);}
+
      // Inicio analogRead 
     dist_pot = analogRead(A0);               //  read the input on analog pin A0:
     if (depura) {Serial.print(dist_pot); Serial.print(" - ");}
@@ -220,85 +207,452 @@ void mededistancia(){
 }
 
 /*=========================================================================================
-  Recebe msg de 433kHz
+  Preenche vetores com valores do ultrassom e valor posição potenciometro
  *=========================================================================================*/
-void RX433(){
-    if (depura) {Serial.println("RH_ASK_MAX_MESSAGE_LEN->"); Serial.println(RH_ASK_MAX_MESSAGE_LEN); }
-    RX433_ok = false;
-    RX433_timeout = false;
-    currentMillis = millis();          //Tempo atual em ms
-    previousMillis = currentMillis;    // Salva o tempo atual
-    do {
-        if (driver.recv(msg, &msglen)) {     // Non-blocking
-            // Message with a good checksum received, dump it.
-            //driver.printBuffer("Got:", msg, msglen);
-            RX433_ok = true;
-            //=======================================================
-            // Converte msg to dist_pot , dist_echo e cont_medida  
-            //=======================================================
-            // dist_pot
-            for (i = 0; i < 5; i++) {
-                if (depura) {Serial.print("Caracter recebido dist_pot->"); Serial.println(msg[i]);  }
-                buffer[i] = msg[i];
-                if (depura) {Serial.print("buffer[]->"); Serial.println(buffer);}
-            }
-            dist_pot = atoi(buffer);
-            dist_pot = dist_pot - 10000;
-            if (depura) {Serial.print("dist_pot-> "); Serial.println(dist_pot);}
-            // if (!depura) {Serial.print("dist_pot-> "); Serial.println(dist_pot);}
-
-            // dist_echo
-            for (i = 0; i < 5; i++) {
-                if (depura) {Serial.print("Caracter recebido dist_echo->"); Serial.println(msg[i+6]);  }
-                buffer[i] = msg[i+6];
-            }
-            dist_echo = atoi(buffer);
-            dist_echo = dist_echo - 20000;
-            if (depura) { Serial.print("Distancia em cm -> "); Serial.println(dist_echo);}
-            // if (!depura) { Serial.print("Distancia em cm -> "); Serial.println(dist_echo);}
-
-            // cont_medida
-            for (i = 0; i < 5; i++) {
-                if (depura) {Serial.print("Caracter recebido cont_medida->"); Serial.println(msg[i+12]);  }
-                buffer[i] = msg[i+12];
-            }
-            cont_medida = atoi(buffer);
-            cont_medida = cont_medida - 30000;
-            if (depura) { Serial.print("Numero da medida -> "); Serial.println(cont_medida);}
-            // if (!depura) { Serial.print("Numero da medida -> "); Serial.println(cont_medida);}
-
-            Serial.print(dist_pot); Serial.print(";");Serial.print(dist_echo);Serial.print(";"); Serial.println(cont_medida);
-
-            // set the brightness of pin ledpwm (D8):
-            analogWrite(ledpwm, 0);
-            delay(250);        
-            analogWrite(ledpwm, 255);
-            delay(250);        
-            analogWrite(ledpwm, dist_pot);
-
-            // Se o valor for 1/3 pisca mais rapido
-            if      (dist_pot < 64) {contador =1;}
-            else if (dist_pot >= 64 && dist_pot < 128) {contador =4;}
-            else if (dist_pot >= 128 && dist_pot < 192) {contador =9;}
-            else    {contador =16;}  //(dist_pot >= 192) 
+void historico(){
+      v_10s_timestamp[med_10s_cont] = previousMedidaMillis; 
+      v_10s_medidaus[med_10s_cont] = dist_echo;  // Guarda nova medida US
+      med_10s_cont++;
+      if (med_10s_cont == 10) {med_10s_cont=0;} // 10 considerando 6 segundos no loop
+      //serial.println("med_10s_cont=",med_10s_cont)
+      //serial.println("med_10s_cont=",type(v_10s_timestamp))
+      if (depura) {
+          Serial.print("Delta_1m = "); Serial.println((previousMedidaMillis-med_1m_timer)/1000);
+          Serial.print("Delta_5m = "); Serial.println((previousMedidaMillis-med_5m_timer)/1000);
+          Serial.print("Delta_15m= "); Serial.println((previousMedidaMillis-med_15m_timer)/1000);
       
-            for (int i=0; i<contador; i++) {
-                digitalWrite(ledPin, LOW);   // turn the LED on
-                delay(80);                   // wait for a second
-                digitalWrite(ledPin, HIGH);  // turn the LED off
-                delay(100);                  // wait for a second
-            }
-  
-        }//fim receber mensagem do outro arduino -RX433MHz
- 
-        yield(); // para nao resetar "Soft WDT reset"
-        if (RX433_ok) {break;} // se obteve leitura
-        //Lógica de verificação do tempo
-        if (millis() - previousMillis > RX433_TOut_Millis) { RX433_timeout = true; }
-        if (depura) {Serial.print("./");}
-    } while (!RX433_timeout);
+          Serial.println("--- Vetor 10s ---");
+          Serial.println(med_10s_cont);
+          Serial.print("Vetor = {");
+          for(int i=0; i<10; i++){Serial.print(v_10s_timestamp[i]/100); Serial.print(",");}
+          Serial.print("Vetor = {");
+          for(int i=0; i<10; i++){Serial.print(v_10s_medidaus[i]); Serial.print(",");}
+          Serial.println("--- ");
+      }
 
-} // fim void RX433()
+      if (previousMedidaMillis-med_1m_timer > 59900){  //1 minutos
+          v_1m_timestamp[med_1m_cont] = previousMedidaMillis;
+          v_1m_medidaus[med_1m_cont] = mediana();
+
+          //if  (v_1m_medidaus[med_1m_cont] != 20:
+            //serial.println("med_1m_cont=",med_1m_cont,"  v_60_1m_medidaus=",v_60_1m_medidaus)
+          Serial.print("med_1m_cont="); Serial.println(med_1m_cont);
+          med_1m_cont++;
+          if (med_1m_cont == 60){med_1m_cont=0;}  
+          med_1m_timer=previousMedidaMillis;
+          //monta_html();
+          //drawGraph_10S();
+          //drawGraph_1M();
+          //drawGraph_5M();
+          //drawGraph_15M();
+      
+          if (previousMedidaMillis-med_5m_timer > 299900){  // 5 minutos
+              //print("++++++ ======Tempo para 5 min=",(agora-med_5m_timer).total_seconds(),med_5m_cont)
+              v_5m_timestamp[med_5m_cont] = v_1m_timestamp[med_1m_cont-1];
+              v_5m_medidaus[med_5m_cont] = v_1m_medidaus[med_1m_cont-1];
+              //print("med_5m_cont=",med_5m_cont)
+              med_5m_cont++;
+              if (med_5m_cont == 288){med_5m_cont=0;}    
+              med_5m_timer=previousMedidaMillis;
+      
+              if (previousMedidaMillis-med_15m_timer > 899900){ // 15 minutos
+                  //print("++++++ ======Tempo para 15 min=",(agora-med_15m_timer).total_seconds())
+                  if (med_15m_cont == 672){
+                       med_15m_cont=0;
+                  }
+                  v_15m_timestamp[med_15m_cont] = v_5m_timestamp[med_5m_cont-1];
+                  v_15m_medidaus[med_15m_cont] = v_5m_medidaus[med_5m_cont-1];
+                  //print("med_15m_cont=",med_15m_cont)
+                  med_15m_cont++;
+                  med_15m_timer=previousMedidaMillis;
+              }
+          }
+      }
+} // Fim void historico()
+
+
+/*=========================================================================================
+   Inicio rotinas webserver
+ *=========================================================================================*/
+
+void monta_html(){
+    digitalWrite(ledweb, LOW);
+    char pagina_html[2000];
+    int sec = millis() / 1000;
+    int min = sec / 60;
+    int hr = min / 60;
+    int dia = hr / 24;
+    
+    snprintf(pagina_html, 2000,
+    
+"<html>\
+<head>\
+<title>ESP8266 - Medicao de Nivel (Cisterna)</title>\
+<style>\
+body {background-color: #cccccc; font-family: Arial, Helvetica, Sans-Serif; Color: #000088;}\
+h1 {text-align:center;background-color: blue;color:white;}\
+p {text-align:center;color:blue;}\
+hr {color:green;}\
+table, th, td {border: 1px solid grey;}\
+</style>\
+</head>\
+<body>\
+<h1>Medida nivel cisterna</h1>\
+<p>Tempo ligado:<font style=color:black;><b>%04d - %02d:%02d:%02d</b></font></p><br>\
+<hr>\
+<h2>Amostra em 10s:</h2>\
+<table>\
+<tr><td>Distancia sem agua</td><td><font style=color:black;><b>%d</b> cm</font></td>\
+<td><meter value=%d min=20 max=200></meter></td><td><font style=color:black; size=-1>faixa:[20-200]</font></td></tr>\
+<tr><td>Valor Potenciomentro</td><td><font style=color:black;><b>%d</b></font></td></tr>\
+<tr><td>Timestamp</td><td><font style=color:black;><b>%d</b> s</font></td></tr>\
+<tr><td>Numero da medida</td><td><font style=color:black;><b>%d</b> un</font></td>\
+<td><meter value=%d min=1 max=2000></meter></td><td><font style=color:black; size=-1>faixa:[1-2000]</font></td></tr>\
+</table>\
+<hr>\
+<h2>Amostra em 1m:</h2>\
+<table>\
+<tr><td>Distancia sem agua</td><td><font style=color:black;><b>%d</b> cm</font></td>\
+<td><meter value=%d min=20 max=200></meter></td><td><font style=color:black; size=-1>faixa:[20-200]</font></td></tr>\
+<tr><td>Timestamp</td><td><font style=color:black;><b>%d</b> s</font></td></tr>\
+</table>\
+<hr>\
+<p><a href='/10S'>Grafico 10 segundos</a></p>\
+<p><a href='/1M'>Grafico 1 minuto</a></p>\
+<p><a href='/15M'>Grafico 15 minutos</a></p>\
+</body>\
+</html>",
+           dia, hr % 24, min % 60, sec % 60, v_10s_medidaus[med_10s_cont-1], v_10s_medidaus[med_10s_cont-1],
+           dist_pot, v_10s_timestamp[med_10s_cont-1]/1000, cont_medida, cont_medida,
+           v_1m_medidaus[med_1m_cont-1], v_1m_medidaus[med_1m_cont-1],  v_1m_timestamp[med_1m_cont-1]/1000);
+
+  server.send(200, "text/html", pagina_html);
+  digitalWrite(ledweb, HIGH);
+  if (depura){
+      Serial.println("--- Pagina HTML = ");
+      Serial.println(pagina_html);
+      Serial.println("--- ");
+  }
+} // Fim void monta_html()
+
+void drawGraph_10S() {
+  digitalWrite(ledweb, LOW);
+  String out;
+  out.reserve(2600);
+  char temp[70];
+  out += "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"620\" height=\"210\">\n";
+  out += "<rect width=\"600\" height=\"200\" fill=\"rgb(250, 230, 210)\" stroke-width=\"1\" stroke=\"rgb(0, 0, 0)\" />\n";
+  out += "<g stroke=\"black\" stroke-width=\"2\" >\n";
+
+  unsigned long x, x1;
+  unsigned long x2;
+            int y1 , y2, contador, ponteiro;
+
+   x = v_10s_timestamp[med_10s_cont]/100;  //decimos de segundo
+  x1 = 0; // v_10s_timestamp[med_10s_cont] - v_10s_timestamp[med_10s_cont]
+  y1 = v_10s_medidaus[med_10s_cont];
+  
+  // primeiro loop do indice até o final do vetor
+  for (contador = med_10s_cont+1; contador < 10; contador++){
+      x2 = v_10s_timestamp[contador]/100;
+//      y2 = v_10s_medidaus[contador];
+      /*Serial.println("1L- Contador, v_10s_timestamp[contador], v_10s_timestamp[med_10s_cont], (-)");
+      Serial.print(contador);Serial.print(";");Serial.print(v_10s_timestamp[contador]/100);Serial.print(";");Serial.print(v_10s_timestamp[med_10s_cont+1]/100);
+      Serial.print(";");Serial.println(x2-x1);
+      */
+      if (x2 > x1){x2 = x2-x;} else {x2 = x1;}
+      y2 = v_10s_medidaus[contador];
+      sprintf(temp, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" />\n", x1, y1, x2, y2);
+    out += temp;
+    x1 = x2;
+    y1 = y2;
+  }
+
+  if (med_10s_cont != 0 ){
+      // segundo loop do indice até ultima leitura do vetor
+      for (contador = 0; contador < med_10s_cont; contador++){
+          x2 = v_10s_timestamp[contador]/100;
+          //y2 = v_10s_medidaus[contador];
+          /*Serial.println("2L- Contador, v_10s_timestamp[contador], v_10s_timestamp[med_10s_cont], (-)");
+          Serial.print(contador);Serial.print(";");Serial.print(v_10s_timestamp[contador]/100);Serial.print(";");Serial.print(v_10s_timestamp[med_10s_cont]/100);
+          Serial.print(";");Serial.println(x2-x1);
+          */
+          if (x2 > x1){x2 = x2-x;} else {x2 = x1;}
+          y2 = v_10s_medidaus[contador];
+          sprintf(temp, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" />\n", x1, y1, x2, y2);
+          out += temp;
+          x1 = x2;
+          y1 = y2;
+      }
+  }
+  if (depura){
+      Serial.println("--- Vetor 10s ---");
+      Serial.println(med_10s_cont);
+      Serial.println(contador);
+      Serial.print("Vetor = {");
+          for(int i=0; i<10; i++){
+              Serial.print(v_10s_timestamp[i]/100); Serial.print(",");
+          }
+      Serial.print("Vetor = {");
+      for(int i=0; i<10; i++){
+          Serial.print(v_10s_medidaus[i]); Serial.print(",");
+      }
+      Serial.println("--- ");
+  }
+  out += "</g>\n</svg>\n";
+
+  server.send(200, "image/svg+xml", out);
+ 
+  if (depura){
+      Serial.println("--- Pagina HTML svg = ");
+      Serial.println(out);
+      Serial.println("--- ");
+  }
+  digitalWrite(ledweb, HIGH);
+}
+
+void drawGraph_1M() {
+  digitalWrite(ledweb, LOW);
+  String out;
+  out.reserve(2600); //2485 valores zerados
+  char temp[70];
+  out += "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"3700\" height=\"500\">\n";
+  out += "<rect width=\"3600\" height=\"400\" fill=\"rgb(250, 230, 210)\" stroke-width=\"1\" stroke=\"rgb(0, 0, 0)\" />\n";
+  out += "<g stroke=\"black\" stroke-width=\"2\" >\n";
+
+  unsigned long x, x1;
+  unsigned long x2;
+            int y1 , y2, contador;
+  
+   x = v_1m_timestamp[med_1m_cont]/1000;
+  x1 = 0; // v_1m_timestamp[med_1m_cont] - v_1m_timestamp[med_1m_cont]
+  y1 = v_1m_medidaus[med_1m_cont];
+  
+  // primeiro loop do indice até o final do vetor
+  for (contador = med_1m_cont+1; contador < 60; contador++){
+      x2 = v_1m_timestamp[contador]/1000;
+      y2 = v_1m_medidaus[contador];
+      /*Serial.println("1L- Contador, v_1m_timestamp[contador], v_1m_timestamp[med_1m_cont], (-)");
+      Serial.print(contador);Serial.print(";");Serial.print(v_1m_timestamp[contador]/1000);Serial.print(";");Serial.print(v_1m_timestamp[med_1m_cont+1]/1000);
+      Serial.print(";");Serial.println(x2-x1);
+      */
+      if (x2 > x1){x2 = x2-x;} else {x2 = x1;}
+
+      sprintf(temp, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" />\n", x1, y1, x2, y2);
+    out += temp;
+    x1 = x2;
+    y1 = y2;
+  }
+
+  if (med_1m_cont != 0 ){
+      // segundo loop do indice até ultima leitura do vetor
+      for (contador = 0; contador < med_1m_cont; contador++){
+          x2 = v_1m_timestamp[contador]/1000;
+          y2 = v_1m_medidaus[contador];
+          /*Serial.println("2L- Contador, v_1m_timestamp[contador], v_1m_timestamp[med_1m_cont], (-)");
+          Serial.print(contador);Serial.print(";");Serial.print(v_1m_timestamp[contador]/1000);Serial.print(";");Serial.print(v_1m_timestamp[med_1m_cont]/1000);
+          Serial.print(";");Serial.println(x2-x1);
+          */
+          if (x2 > x1){x2 = x2-x;} else {x2 = x1;}
+          y2 = v_1m_medidaus[contador];
+          sprintf(temp, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" />\n", x1, y1, x2, y2);
+          out += temp;
+          x1 = x2;
+          y1 = y2;
+      }
+  }
+  if (depura){
+      Serial.println("--- Vetor 1m ---");
+      Serial.println(med_1m_cont);
+      Serial.println(contador);
+      Serial.print("Vetor = {");
+          for(int i=0; i<60; i++){
+              Serial.print(v_1m_timestamp[i]/1000); Serial.print(",");
+          }
+      Serial.println("--- ");
+  }
+  out += "</g>\n</svg>\n";
+
+  server.send(200, "image/svg+xml", out);
+
+  if (depura){
+      Serial.println("--- Pagina HTML svg = ");
+      Serial.println(out);
+      Serial.println("--- ");
+  }
+  digitalWrite(ledweb, HIGH);
+}
+
+void drawGraph_5M() {
+  digitalWrite(ledweb, LOW);
+  String out;
+  out.reserve(2600); //2475 valores zerados
+  char temp[70];
+  out += "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"880\" height=\"500\">\n";
+  out += "<rect width=\"864\" height=\"400\" fill=\"rgb(250, 230, 210)\" stroke-width=\"1\" stroke=\"rgb(0, 0, 0)\" />\n";
+  out += "<g stroke=\"black\" stroke-width=\"2\" >\n";
+
+  unsigned long x, x1;
+  unsigned long x2;
+            int y1 , y2, contador;
+  
+   x = v_5m_timestamp[med_5m_cont]/100; //decimos de segundos 864
+  x1 = 0; // v_5m_timestamp[med_5m_cont] - v_5m_timestamp[med_5m_cont]
+  y1 = v_5m_medidaus[med_5m_cont];
+  
+  // primeiro loop do indice até o final do vetor
+  for (contador = med_5m_cont+1; contador < 60; contador++){
+      x2 = v_5m_timestamp[contador]/100;
+      y2 = v_5m_medidaus[contador];
+      /*Serial.println("1L- Contador, v_5m_timestamp[contador], v_5m_timestamp[med_5m_cont], (-)");
+      Serial.print(contador);Serial.print(";");Serial.print(v_5m_timestamp[contador]/100);Serial.print(";");Serial.print(v_5m_timestamp[med_5m_cont+1]/100);
+      Serial.print(";");Serial.println(x2-x1);
+      */
+      if (x2 > x1){x2 = x2-x;} else {x2 = x1;}
+
+      sprintf(temp, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" />\n", x1, y1, x2, y2);
+    out += temp;
+    x1 = x2;
+    y1 = y2;
+  }
+
+  if (med_5m_cont != 0 ){
+      // segundo loop do indice até ultima leitura do vetor
+      for (contador = 0; contador < med_5m_cont; contador++){
+          x2 = v_5m_timestamp[contador]/100;
+          y2 = v_5m_medidaus[contador];
+          /*Serial.println("2L- Contador, v_5m_timestamp[contador], v_5m_timestamp[med_5m_cont], (-)");
+          Serial.print(contador);Serial.print(";");Serial.print(v_5m_timestamp[contador]/100);Serial.print(";");Serial.print(v_5m_timestamp[med_5m_cont]/100);
+          Serial.print(";");Serial.println(x2-x1);
+          */
+          if (x2 > x1){x2 = x2-x;} else {x2 = x1;}
+          y2 = v_5m_medidaus[contador];
+          sprintf(temp, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" />\n", x1, y1, x2, y2);
+          out += temp;
+          x1 = x2;
+          y1 = y2;
+      }
+  }
+  if (depura){
+      Serial.println("--- Vetor 5m ---");
+      Serial.println(med_5m_cont);
+      Serial.println(contador);
+      Serial.print("Vetor = {");
+          for(int i=0; i<60; i++){
+              Serial.print(v_5m_timestamp[i]/100); Serial.print(",");
+          }
+      Serial.println("--- ");
+  }
+  out += "</g>\n</svg>\n";
+
+  server.send(200, "image/svg+xml", out);
+
+  if (depura){
+      Serial.println("--- Pagina HTML svg = ");
+      Serial.println(out);
+      Serial.println("--- ");
+  }
+  digitalWrite(ledweb, HIGH);
+}
+
+void drawGraph_15M() {
+  digitalWrite(ledweb, LOW);
+  String out;
+  out.reserve(2600); //25735 valores zerados
+  char temp[70];
+  // 604800 segundos ou 10800 minutos
+  out += "<svg xmlns=\"http://www.w3.org/2000/svg\" version=\"1.1\" width=\"10820\" height=\"500\">\n";
+  out += "<rect width=\"10800\" height=\"400\" fill=\"rgb(250, 230, 210)\" stroke-width=\"1\" stroke=\"rgb(0, 0, 0)\" />\n";
+  out += "<g stroke=\"black\" stroke-width=\"2\" >\n";
+
+  unsigned long x, x1;
+  unsigned long x2;
+            int y1 , y2, contador;
+  
+   x = v_15m_timestamp[med_15m_cont]/60000; //minutos
+  x1 = 0; // v_15m_timestamp[med_15m_cont] - v_15m_timestamp[med_15m_cont]
+  y1 = v_15m_medidaus[med_15m_cont];
+  
+  // primeiro loop do indice até o final do vetor
+  for (contador = med_15m_cont+1; contador < 672; contador++){
+      x2 = v_15m_timestamp[contador]/60000;
+      y2 = v_15m_medidaus[contador];
+      /*Serial.println("1L- Contador, v_15m_timestamp[contador], v_15m_timestamp[med_15m_cont], (-)");
+      Serial.print(contador);Serial.print(";");Serial.print(v_15m_timestamp[contador]/60000);Serial.print(";");Serial.print(v_15m_timestamp[med_15m_cont+1]/60000);
+      Serial.print(";");Serial.println(x2-x1);
+      */
+      if (x2 > x1){x2 = x2-x;} else {x2 = x1;}
+
+      sprintf(temp, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" />\n", x1, y1, x2, y2);
+    out += temp;
+    x1 = x2;
+    y1 = y2;
+  }
+
+  if (med_15m_cont != 0 ){
+      // segundo loop do indice até ultima leitura do vetor
+      for (contador = 0; contador < med_15m_cont; contador++){
+          x2 = v_15m_timestamp[contador]/60000;
+          y2 = v_15m_medidaus[contador];
+          /*Serial.println("2L- Contador, v_15m_timestamp[contador], v_15m_timestamp[med_15m_cont], (-)");
+          Serial.print(contador);Serial.print(";");Serial.print(v_15m_timestamp[contador]/60000);Serial.print(";");Serial.print(v_15m_timestamp[med_15m_cont]/60000);
+          Serial.print(";");Serial.println(x2-x1);
+          */
+          if (x2 > x1){x2 = x2-x;} else {x2 = x1;}
+          y2 = v_15m_medidaus[contador];
+          sprintf(temp, "<line x1=\"%d\" y1=\"%d\" x2=\"%d\" y2=\"%d\" />\n", x1, y1, x2, y2);
+          out += temp;
+          x1 = x2;
+          y1 = y2;
+      }
+  }
+  
+  if (depura){
+      Serial.println("--- Vetor 15m ---");
+      Serial.println(med_15m_cont);
+      Serial.println(contador);
+      Serial.print("Vetor = {");
+         for(int i=0; i<672; i++){
+             Serial.print(v_15m_timestamp[i]/60000); Serial.print(",");
+         }
+      Serial.println("--- ");
+  }
+  out += "</g>\n</svg>\n";
+
+  server.send(200, "image/svg+xml", out);
+
+  if (depura){
+      Serial.println("--- Pagina HTML svg = ");
+      Serial.println(out);
+      Serial.println("--- ");
+  }
+  digitalWrite(ledweb, HIGH);
+}
+
+void handleNotFound() {
+  digitalWrite(ledweb, LOW);
+  String message = "File Not Found\n\n";
+  message += "URI: ";
+  message += server.uri();
+  message += "\nMethod: ";
+  message += (server.method() == HTTP_GET) ? "GET" : "POST";
+  message += "\nArguments: ";
+  message += server.args();
+  message += "\n";
+
+  for (uint8_t i = 0; i < server.args(); i++) {
+    message += " " + server.argName(i) + ": " + server.arg(i) + "\n";
+  }
+
+  if (depura) {
+	  Serial.print("message = "); Serial.println(message);
+	  Serial.print("server.method() = "); Serial.println(server.method());
+	  }
+
+  server.send(404, "text/plain", message);
+  digitalWrite(ledweb, HIGH);
+}
+/*====== Fim rotinas webserver ===================================*/
 
 
 /*=========================================================================================
@@ -308,7 +662,8 @@ void setup() {
     // mededistancia
     pinMode(trigPin,OUTPUT);
     pinMode(echoPin,INPUT);
-  
+    //pinMode(ledweb, OUTPUT);
+      
     // piscaled
     pinMode(ledPin,OUTPUT);  //DEFINE O PINO COMO SAÍDA
 
@@ -324,35 +679,29 @@ void setup() {
     }
     Serial.print(" connected: ");
     Serial.println(WiFi.status());
-    //  Serial.printf(" SSID = %s, RSSI =%d.\n\n", WiFi.SSID().toString().c_str(), WiFi.RSSI());
+    //if (depura){Serial.printf(" SSID = %s, RSSI =%d.\n\n", WiFi.SSID().toString().c_str(), WiFi.RSSI());}
     Serial.print("Connected! IP address: ");
     Serial.println(WiFi.localIP());
+    
+    // UDP server
     Serial.printf("UDP server on port %d\n", localUdpPort);
     Udp.begin(localUdpPort);
     Serial.printf("Now listening at IP %s, UDP port %d\n", WiFi.localIP().toString().c_str(), localUdpPort);
 
-    // Teste RH_ASK driver
-    if (!driver.init()) Serial.println("Teste RH_ASK driver - init failed");
-    else Serial.println("Teste RH_ASK driver - init Successfull");
-    // send an intro:
-    if (depura) {Serial.println("\n...começando 433mhz RX:...\n");}
-    if (depura) {Serial.println("--------------------------\n");}
-  
-  // Inicia definicoes para webserver
-  pinMode(led, OUTPUT);
-  digitalWrite(led, 0);
-
-  if (MDNS.begin("esp8266")) {
-    Serial.println("MDNS responder started");
-  }
-  server.on("/", handleRoot);
-  server.on("/test.svg", drawGraph);
-  server.on("/inline", []() {
-    server.send(200, "text/plain", "this works as well");
-  });
-  server.onNotFound(handleNotFound);
-  server.begin();
-  Serial.println("HTTP server started");
+    if (MDNS.begin("esp8266")) {
+      Serial.println("MDNS responder started");
+    }
+    server.on("/", monta_html);
+    server.on("/10S", drawGraph_10S);
+    server.on("/1M", drawGraph_1M);
+    server.on("/5M", drawGraph_5M);
+    server.on("/15M", drawGraph_15M);
+    server.on("/inline", []() {
+        server.send(200, "text/plain", "this works as well");
+    });
+    server.onNotFound(handleNotFound);
+    server.begin();
+    Serial.println("HTTP server started");
 
 } // Fim setup()
 
@@ -361,19 +710,25 @@ void setup() {
   ------L O O P ---------------
  *=========================================================================================*/
 void loop() {
-  
-    //Lógica de verificação do tempo
+    
     currentMillis = millis();    //Tempo atual em ms
-    if (currentMillis - previousMillis > piscaledInterval) { 
+    // Imprime Tempo do Loop
+    Serial.println("");
+    Serial.println("=============== Tempo de Loop ===============");
+    Serial.printf("=============== [%d ms]\n", currentMillis - previousLoopMillis);
+    Serial.println("=============== Tempo de Loop ===============");
+    previousLoopMillis = currentMillis;    // Salva o tempo atual
+    //Lógica de verificação do tempo
+    if (currentMillis - previousMedidaMillis > piscaledInterval) { 
         piscaled();
-        previousMillis = currentMillis;    // Salva o tempo atual
+        previousMedidaMillis = currentMillis;    // Salva o tempo atual
     }
-  
+    
     int packetSize = Udp.parsePacket();
     if (packetSize || continuo) {
         if (packetSize) {
             // receive incoming UDP packets
-            Serial.printf("Received %d bytes from %s, port %d\n", packetSize, Udp.remoteIP().toString().c_str(), Udp.remotePort());
+            Serial.printf("Recebido em %s:%d, %d bytes from %s:%d \n", WiFi.localIP().toString().c_str(), localUdpPort, packetSize, Udp.remoteIP().toString().c_str(), Udp.remotePort());
             int n = Udp.read(incomingPacket, 255);
             incomingPacket[n] = 0;
             Serial.printf("UDP received packet contents: %s\n", incomingPacket);
@@ -383,22 +738,25 @@ void loop() {
                 strcpy(incomingPacket_comp, incomingPacket); 
                 if (incomingPacket_comp[n-1] == 10) {incomingPacket_comp[n-1] = 0;};  // se contiver `cr` fixar 0.
                 if (depura) {
-                    Serial.printf("Received [%d] bytes from [%s] e [%d] from [%s]\n", strlen(incomingPacket), incomingPacket, strlen(incomingPacket_comp), incomingPacket_comp);
+                    Serial.printf("Received [%d] bytes from [%s] e [%d] from [%s]\n",
+                     strlen(incomingPacket), incomingPacket, strlen(incomingPacket_comp), incomingPacket_comp);
                     Serial.print("incomingPacket[]->"); Serial.println(incomingPacket);
-                    Serial.print("incomingPacket[]->"); Serial.println(incomingPacket_comp);
+                    Serial.print("incomingPacket_comp[]->"); Serial.println(incomingPacket_comp);
                 }
                 if (strcmp(incomingPacket_comp, "depura") == 0) {
                     if (depura) {depura = false;} else {depura = true;}
                     Serial.print("depura=");Serial.println(depura);
                 }
+                if (strcmp(incomingPacket_comp, "simula") == 0) {
+                    if (simula) {simula = false;} else {simula = true;}
+                    Serial.print("simula=");Serial.println(simula);
+                }
                 else if (strcmp(incomingPacket_comp, "continuo") == 0) {
                     if (continuo) {continuo = false;} else {continuo = true;}
                     Serial.print("continuo=");Serial.println(continuo);
                 }
-                else if (strcmp(incomingPacket_comp, "le_RX433") == 0) {le_RX433 = true; le_US = false; Serial.print("le_RX433="); Serial.println(le_RX433);}
                 else if (strcmp(incomingPacket_comp, "le_US") == 0)    {
-                    if (!le_US) { cont_medida = 0;}
-                    le_US = true; le_RX433 = false;
+                    if (le_US) {le_US = false;} else {le_US = true; cont_medida = 0;}
                     Serial.print("le_US="); Serial.println(le_US);
                 }
                 else if (strcmp(incomingPacket_comp, "ajuda") == 0)    {ajuda = true;}
@@ -407,88 +765,47 @@ void loop() {
         } // Fim de recebeu algo pelo UDP - receive incoming UDP packets
         if (ajuda) {
             Serial.println("=============================================");
+            Serial.print("      ajuda="); Serial.println(ajuda);
             Serial.print("     depura="); Serial.println(depura);
             Serial.print("   continuo="); Serial.println(continuo);
-            Serial.print("   le_RX433="); Serial.println(le_RX433);
             Serial.print("      le_US="); Serial.println(le_US); 
+            Serial.print("     simula="); Serial.println(simula); 
             Serial.println("=============================================");
-            strcpy(replyPacket, "Msg validas [depura], [le_RX433], [le_US], [continuo], []\n");  // a reply string to send back
+            strcpy(replyPacket, "Msg validas [ajuda], [depura], [continuo], [le_US], [simula], []\n");  // a reply string to send back
             Serial.println("=============================================");
             put_UDP();
             ajuda = false;
         } // Fim ajuda  
-        else {    // nao sendo ajuda executa
+        else {    // nao sendo ajuda mede por ((continuo|depura) & le_US)
             strcpy(replyPacket, "");  // a reply string to send back
 
-            if (le_RX433) { //Le RX433
-                RX433();
-                if (RX433_ok) {
-                    for (i = 0; i < msglen; i++) {
-                        if (depura) {Serial.print("Caracter recebido RX433()->"); Serial.println(msg[i]);  }
-                        replyPacket[i] = msg[i];
-                    }
-                    replyPacket[i] = '\0';
-                    if (depura) {
-                        Serial.printf("dist_pot [%d], dist_echo [%d], cont_medida [%d]\n", dist_pot, dist_echo, cont_medida);
-                        Serial.print("UDP msg="); Serial.println(replyPacket);
-                    }
-                    strcat(replyPacket, "\n");   // pula linha
-                    put_UDP();
-                }
-                else { 
-                    if (depura) {Serial.println("UDP RX433 nao OK");}
-                    strcpy(replyPacket, "-----;-----;-----");  // a reply string to send back
-                    strcat(replyPacket, "\n");   // pula linha
-                    put_UDP();
-                }
-            } //Fim le_RX433     
-
             if (le_US) {    //Le distancia ultrassom e pisca duas vezes
+                previousMedidaMillis = previousLoopMillis;    // Salva o tempo atual
                 mededistancia();
+                historico();
                 if (depura) {
                     Serial.print("dist_echo loop= "); Serial.println(dist_echo);
                     Serial.print("medida loop = "); Serial.println(medida);
                 }
                 piscaled();
-                itoa(10000+dist_pot, medida, 10);
-                if (depura) {
-                    Serial.print("dist_pot -antes strcat-= "); Serial.println(dist_pot);
-                    Serial.print("medida -antes strcat-= "); Serial.println(medida);
-                }
-                strcat(replyPacket, medida); //Medida do potenciometro +10000
-                strcat(replyPacket, ";");
-                if (depura) {
-                    Serial.print("dist_echo = "); Serial.println(dist_echo);
-                    Serial.print("medida = "); Serial.println(medida);
-                }
-                itoa(20000+dist_echo, medida, 10); //CUIDADO itoa muda o valor de distancia
-                if (depura) {
-                    Serial.print("dist_echo itoa 20000= "); Serial.println(dist_echo);
-                    Serial.print("medida itoa 20000= "); Serial.println(medida);
-                }
-                strcat(replyPacket, medida); //Medida da distancia Ultrassom +20000
-                strcat(replyPacket, ";"); 
-                itoa(cont_medida+30000, medida,10);
-                strcat(replyPacket, medida); //Numero da medida
-                strcat(replyPacket, "\n");   // pula linha
-                if (depura) {
-                    Serial.print("cont_medida itoa 30000= "); Serial.println(cont_medida);
-                    Serial.print("medida itoa 30000= "); Serial.println(medida);
-                }
+                contador = snprintf(replyPacket, 18, "%d;%d;%d\n", 10000+dist_pot, 20000+dist_echo, 30000+cont_medida);
+                if (depura){Serial.print("contador="); Serial.println(contador);}
                 put_UDP();
-                delay(4500);
+                
             } // fim le distancia ultrassom
 
-        } // fim le_US ou RX433 e nao eh ajuda
+        } // fim le_US e nao eh ajuda
     } // Fim tratamento msg UDP ou le "continuo"
-    //  delay(loopInterval);
 
-  server.handleClient();
-  MDNS.update();
+    server.handleClient();
+    MDNS.update();
+
+    delay(loopInterval);
 
 } // Fim void loop()
 
-/*
+/* ****** DICAS *******
+ * ********************
   test (shell/netcat):
   --------------------
     nc -u 10.161.2.122 43210
@@ -523,4 +840,6 @@ int main() {
   return 0;
 }
 
+//insercao da figura svg automatica
+    <img src=\"/test.svg\" />\
 */
