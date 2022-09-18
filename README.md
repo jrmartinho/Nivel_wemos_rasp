@@ -10,6 +10,7 @@ Componentes:
 
 Programa:
  - Wemos: proj_wemos_sr04.ino
+          wemos_sr04_V2_220910_git.ino - Nova versão - procure por "preencher" para ajustar com suas informações
  - Raspberry: --depois-- Um programa para receber os dados do wemos e outro para disponibiizar por web.
 
 Esquematico:  -- depois -----  
