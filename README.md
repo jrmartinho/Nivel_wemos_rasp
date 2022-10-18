@@ -6,16 +6,16 @@
 
 #### Composição do sistema para medida de nivel.
 
-##### 1.Componentes:
+##### 1. Componentes:
 - Medidor de distancia: Módulo Sensor Ultrassônico Impermeável Jsn-sr04t
 - Módulo programavel com WI-FI: Módulo Wemos D1 Mini Com Wifi Esp8266 Esp-12
 - Mini Computador: Raspberry Pi3 Model B + fonte
 
-##### 2.Programa:
- - Wemos: Wemos_sr04_V2_220910_git.ino - Nova versão - procure por "preencher" para ajustar com suas informações
+##### 2. Programa:
+ - Wemos: Wemos_sr04_V2_220926_git.ino - Nova versão - procure por "preencher" para ajustar com suas informações
  - Raspberry: --depois-- Um programa para receber os dados do wemos e outro para disponibiizar por web.
 
-##### 3.Esquematico:  
+##### 3. Esquemático:  
 - Wemos Mini D1 + SR04T + Potenciometro + LedPWM <br><br>
 ![wemos_sr04_circuito.png](wemos_sr04_circuito.png)  
 
