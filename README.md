@@ -1,7 +1,7 @@
 ### Nivel_wemos_rasp<br>
 #### Sistema medicao de Nivel com uso do SR04T, Wemos, Raspberry.<br>
 - Wemos envia pacote UDP na rede wireless interna, neste caso para o Raspberry.<br>
-- Wemos envia valores para a internet, neste caso para o site Thingspeak.<br>
+- Wemos envia valores para a internet, neste caso para o site [Thingspeak](https://thingspeak.com/channels/1700335).<br>
 - Wemos disponibiliza uma pagina WEB na rede interna para consulta de valor instantâneo e historico.<br>
 
 #### Composição do sistema para medida de nivel.
