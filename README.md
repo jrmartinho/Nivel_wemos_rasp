@@ -13,9 +13,11 @@ Programa:
           wemos_sr04_V2_220910_git.ino - Nova versão - procure por "preencher" para ajustar com suas informações
  - Raspberry: --depois-- Um programa para receber os dados do wemos e outro para disponibiizar por web.
 
-Esquematico:  -- depois -----  
+Esquematico:  
+- Wemos Mini D1 + SR04T + Potenciometro + LedPWM <br><br>
+![wemos_sr04_circuito.png](wemos_sr04_circuito.png)  
 
-<br><br>
+<br><br><br>
 
 ---
 ### ++++ **CUIDADO** ++++  Considere a adaptacao de nivel 3,3V entre o WEMOS e o SR04T.
